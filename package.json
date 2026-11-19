@@ -1,0 +1,11 @@
+{
+  "name": "image-processor",
+  "private": true,
+  "description": "Convenience scripts; the stack itself runs entirely in Docker.",
+  "scripts": {
+    "up": "docker compose up --build",
+    "down": "docker compose down",
+    "test:api": "docker compose --profile test run --rm api-test",
+    "test:web": "corepack pnpm --dir apps/web test"
+  }
+}

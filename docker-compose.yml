@@ -1,0 +1,135 @@
+name: image-processor
+
+x-api-env: &api-env
+  APP_NAME: "Image Processor"
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  # Demo-only key so the stack runs without a .env file. Override outside the demo.
+  APP_KEY: ${APP_KEY:-base64:mDz47HJcWaps15Qc04WK28985dadJ0egp+fgm+dOP4I=}
+  APP_URL: http://localhost:8080
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_DATABASE: ${DB_DATABASE:-images}
+  DB_USERNAME: ${DB_USERNAME:-images}
+  DB_PASSWORD: ${DB_PASSWORD:-secret}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_CLIENT: phpredis
+  QUEUE_CONNECTION: redis
+  REDIS_QUEUE_RETRY_AFTER: 150
+  CACHE_STORE: redis
+  SESSION_DRIVER: array
+  IMAGE_MAX_UPLOAD_KB: ${IMAGE_MAX_UPLOAD_KB:-20480}
+  IMAGE_MAX_DIMENSION: ${IMAGE_MAX_DIMENSION:-1280}
+  IMAGE_QUALITY: ${IMAGE_QUALITY:-80}
+  IMAGE_MAX_PIXELS: ${IMAGE_MAX_PIXELS:-50000000}
+  IMAGE_STALE_AFTER_SECONDS: ${IMAGE_STALE_AFTER_SECONDS:-600}
+  IMAGE_RETENTION_HOURS: ${IMAGE_RETENTION_HOURS:-24}
+  IMAGE_PROCESSING_DELAY_MS: ${IMAGE_PROCESSING_DELAY_MS:-0}
+
+x-api-build: &api-build
+  context: ./apps/api
+  target: app
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-images}
+      POSTGRES_USER: ${DB_USERNAME:-images}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sh:/docker-entrypoint-initdb.d/init-test-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # HTTP API: validates + stores uploads, records jobs, dispatches to the queue. Never processes images.
+  api:
+    build: *api-build
+    image: image-processor-api
+    environment:
+      <<: *api-env
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - images-data:/app/storage/app/images
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/up >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  # Queue worker: the only place images are decoded/resized/encoded. Scale with --scale worker=N.
+  worker:
+    build: *api-build
+    image: image-processor-api
+    environment: *api-env
+    command: ["php", "artisan", "queue:work", "redis", "--queue=images", "--tries=3", "--timeout=120", "--sleep=1"]
+    volumes:
+      - images-data:/app/storage/app/images
+    stop_grace_period: 130s
+    healthcheck:
+      disable: true
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Runs scheduled maintenance (stale-job reaper).
+  scheduler:
+    build: *api-build
+    image: image-processor-api
+    environment: *api-env
+    command: ["php", "artisan", "schedule:work"]
+    healthcheck:
+      disable: true
+    volumes:
+      - images-data:/app/storage/app/images
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Backend test runner: docker compose --profile test run --rm api-test
+  api-test:
+    profiles: [test]
+    build:
+      context: ./apps/api
+      target: base
+    image: image-processor-api-base
+    working_dir: /app
+    entrypoint: []
+    command: ["sh", "-c", "composer install --no-interaction --no-progress && php artisan test"]
+    environment:
+      DB_HOST: postgres
+    volumes:
+      - ./apps/api:/app
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  postgres-data:
+  redis-data:
+  images-data:
