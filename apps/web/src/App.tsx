@@ -3,18 +3,18 @@ import { ApiError, uploadImage } from './api/client'
 import { Dropzone } from './components/Dropzone'
 import { JobCard } from './components/JobCard'
 import { useJobStatus } from './hooks/useJobStatus'
+import { loadCurrentJob, saveCurrentJob, type StoredJob } from './lib/currentJobStorage'
 import { formatBytes } from './lib/format'
 
 const TITLE = 'Image Processor'
 
-interface CurrentJob {
-  jobId: string
-  fileName: string
-  fileSize: number
-}
-
 export default function App() {
-  const [current, setCurrent] = useState<CurrentJob | null>(null)
+  // Restored on reload: the job keeps running on the server, so we just resume polling.
+  const [current, setCurrentState] = useState<StoredJob | null>(loadCurrentJob)
+  const setCurrent = (job: StoredJob | null) => {
+    saveCurrentJob(job)
+    setCurrentState(job)
+  }
   const [uploading, setUploading] = useState<File | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)

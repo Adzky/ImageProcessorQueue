@@ -58,7 +58,7 @@ bash scripts/smoke.sh
 | API | 202 + `job_id` for JPG/PNG/WebP and uppercase extensions; the 20 MB limit; wrong type; a text file renamed to `.jpg` (content sniffing); 503 when the queue is down; status shape in every state; 404 for unknown and malformed ids; download 409/410/200; non-ASCII download filenames |
 | Worker | Landscape/portrait → 1280; tall-narrow (100×5000 → 26×1280); no upscaling; WebP output; quality setting reaches the encoder; PNG transparency kept; CMYK → sRGB; EXIF orientation; metadata stripped; first frame of animations; corrupt file; unsupported format; >50 MP; no partial files left behind; permanent failures not retried; `retries_exhausted` message |
 | Recovery | The reaper fails stale `processing` jobs only, never `pending` or finished ones, and is scheduled every minute |
-| Frontend | Backoff sequence (cap, jitter), stop on done, error backoff, pause while the tab is hidden, give-up, cancel; client validation; API error mapping (413, 422, 404, network) |
+| Frontend | Backoff sequence (cap, jitter), stop on done, error backoff, pause while the tab is hidden, give-up, cancel; client validation; API error mapping (413, 422, 404, network); resume-after-reload storage (corrupt or unavailable storage) |
 
 ## Environment variables
 
@@ -165,6 +165,7 @@ docker compose up -d worker
 - **Polling pauses while the tab is hidden** (Page Visibility API) and resumes instantly when you come back.
 - **Network or server errors** keep backing off and show "Connection lost, retrying…", so it survives an API restart.
 - After **10 minutes** it gives up with a "Still processing — check back later" message and a Refresh button.
+- **Reloading the page resumes polling** for the current job (its id is kept in `localStorage`): the job lives on the server, independent of the browser.
 - When the job completes, the card switches to the download state, the tab title becomes "✓ Ready", and a screen-reader live region announces it.
 
 Polling (rather than WebSockets/SSE) matches the brief and needs no extra infrastructure. With backoff and visibility pausing, it's cheap.
@@ -185,7 +186,6 @@ Polling (rather than WebSockets/SSE) matches the brief and needs no extra infras
 ### What I'd do next (deliberately out of scope for the time budget)
 
 - **Retention cleanup:** a scheduled job deleting files older than `IMAGE_RETENTION_HOURS`. The API already answers 410 Gone for expired results.
-- **Resume after reload:** remember the current job id in `localStorage`.
 - **S3 + presigned URLs:** upload straight to object storage and download from a CDN.
 - **Laravel Horizon** for queue metrics and dashboards, plus alerting on failed-job rate and queue depth.
 - **Auth and per-user job lists, rate limiting, and virus scanning** of uploads.
