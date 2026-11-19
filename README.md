@@ -47,6 +47,9 @@ docker compose --profile test run --rm api-test
 # Frontend: Vitest (uses corepack, so no global pnpm install is needed)
 corepack pnpm --dir apps/web install
 corepack pnpm --dir apps/web test
+
+# End-to-end: with the stack running, upload → poll → download → verify WebP 1280px
+bash scripts/smoke.sh
 ```
 
 | Layer | What is covered |

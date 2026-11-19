@@ -6,6 +6,7 @@
     "up": "docker compose up --build",
     "down": "docker compose down",
     "test:api": "docker compose --profile test run --rm api-test",
-    "test:web": "corepack pnpm --dir apps/web test"
+    "test:web": "corepack pnpm --dir apps/web test",
+    "smoke": "bash scripts/smoke.sh"
   }
 }
