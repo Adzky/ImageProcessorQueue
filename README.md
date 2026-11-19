@@ -57,7 +57,7 @@ bash scripts/smoke.sh
 | State machine | The claim token: duplicate deliveries are no-ops, retries take over, a stale owner can't overwrite the result, terminal rows never change |
 | API | 202 + `job_id` for JPG/PNG/WebP and uppercase extensions; the 20 MB limit; wrong type; a text file renamed to `.jpg` (content sniffing); 503 when the queue is down; status shape in every state; 404 for unknown and malformed ids; download 409/410/200; non-ASCII download filenames |
 | Worker | Landscape/portrait → 1280; tall-narrow (100×5000 → 26×1280); no upscaling; WebP output; quality setting reaches the encoder; PNG transparency kept; CMYK → sRGB; EXIF orientation; metadata stripped; first frame of animations; corrupt file; unsupported format; >50 MP; no partial files left behind; permanent failures not retried; `retries_exhausted` message |
-| Recovery | The reaper fails stale `processing` jobs only, never `pending` or finished ones, and is scheduled every minute |
+| Recovery & retention | The reaper fails stale `processing` jobs only, never `pending` or finished ones, and is scheduled every minute. Cleanup expires finished jobs after 24 h (files deleted, 410 on download), never touches unfinished ones, and is idempotent |
 | Frontend | Backoff sequence (cap, jitter), stop on done, error backoff, pause while the tab is hidden, give-up, cancel; client validation; API error mapping (413, 422, 404, network); resume-after-reload storage (corrupt or unavailable storage) |
 
 ## Environment variables
@@ -77,7 +77,7 @@ bash scripts/smoke.sh
 | `IMAGE_QUALITY` | `80` | WebP quality. |
 | `IMAGE_MAX_PIXELS` | `50000000` | Inputs above 50 MP are rejected (guards against decompression bombs). |
 | `IMAGE_STALE_AFTER_SECONDS` | `600` | The reaper fails `processing` jobs whose last claim is older than this. |
-| `IMAGE_RETENTION_HOURS` | `24` | Reserved for result cleanup (see "What I'd do next"). |
+| `IMAGE_RETENTION_HOURS` | `24` | Hourly cleanup deletes files of finished jobs older than this. The download then answers 410 Gone. |
 | `IMAGE_PROCESSING_DELAY_MS` | `0` | **Demo only.** Adds an artificial delay inside the worker so you can watch the states change or kill a worker mid-job. |
 | `VITE_API_BASE_URL` | `/api` | Frontend build-time API base. |
 | `VITE_API_PROXY` | `http://localhost:8000` | Where `pnpm dev` proxies `/api` (local frontend development only). |
@@ -103,7 +103,7 @@ bash scripts/smoke.sh
                   │ results/      │                                        │ Imagick   │
                   └───────────────┘                                        └───────────┘
                                                                            ┌───────────┐
-                                                                           │ scheduler │ reaper, every minute
+                                                                           │ scheduler │ reaper (1 min), cleanup (1 h)
                                                                            └───────────┘
 ```
 
@@ -113,6 +113,7 @@ bash scripts/smoke.sh
 2. **Process:** a worker pops the message. It claims the row (`processing`), decodes, auto-orients, resizes, encodes WebP at quality 80, writes `results/{id}.webp` atomically (temp file + rename), and marks the row `completed`.
 3. **Poll:** `GET /api/images/{id}` returns the status, attempt count, original and result dimensions, and either `download_url` or `error {code, message}`.
 4. **Download:** `GET /api/images/{id}/download` streams the WebP as `{original-name}.webp`. It returns 409 if the job isn't finished yet.
+5. **Cleanup:** every hour, `images:cleanup` deletes the files of finished jobs older than 24 h and marks them expired. The row is kept, so the API answers **410 Gone** rather than 404 and the UI says the result has expired.
 
 ### Why these pieces
 
@@ -185,7 +186,6 @@ Polling (rather than WebSockets/SSE) matches the brief and needs no extra infras
 
 ### What I'd do next (deliberately out of scope for the time budget)
 
-- **Retention cleanup:** a scheduled job deleting files older than `IMAGE_RETENTION_HOURS`. The API already answers 410 Gone for expired results.
 - **S3 + presigned URLs:** upload straight to object storage and download from a CDN.
 - **Laravel Horizon** for queue metrics and dashboards, plus alerting on failed-job rate and queue depth.
 - **Auth and per-user job lists, rate limiting, and virus scanning** of uploads.
@@ -200,7 +200,7 @@ apps/api/        Laravel API + worker (one image, different commands)
   app/Jobs/        ProcessImage (queue job: retry/fail policy)
   app/Images/      ImageJobRunner (claim → process → complete), ImageProcessor (the transform)
   app/Models/      ImageJob (guarded state transitions)
-  app/Console/     images:reap-stale
+  app/Console/     images:reap-stale, images:cleanup
   docker/          Caddyfile, php.ini, entrypoint
 apps/web/        React SPA + nginx config
 docker/          Postgres init (test database)
