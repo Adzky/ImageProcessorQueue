@@ -23,7 +23,9 @@ class ProcessImage implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 3;
+    public const MAX_TRIES = 3;
+
+    public int $tries = self::MAX_TRIES;
 
     public int $timeout = 120;
 

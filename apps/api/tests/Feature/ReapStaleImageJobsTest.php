@@ -13,12 +13,12 @@ class ReapStaleImageJobsTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function job(ImageJobStatus $status, ?\DateTimeInterface $startedAt, ?\DateTimeInterface $createdAt = null): ImageJob
+    private function job(ImageJobStatus $status, ?\DateTimeInterface $startedAt, ?\DateTimeInterface $createdAt = null, int $attempts = 3): ImageJob
     {
         $job = ImageJob::create([
             'original_name' => 'a.jpg', 'original_mime' => 'image/jpeg', 'original_size' => 1, 'original_path' => 'uploads/a.jpg',
             'status' => $status,
-            'attempts' => $status === ImageJobStatus::Processing ? 1 : 0,
+            'attempts' => $status === ImageJobStatus::Processing ? $attempts : 0,
             'started_at' => $startedAt,
         ]);
         if ($createdAt) {
@@ -37,6 +37,26 @@ class ReapStaleImageJobsTest extends TestCase
         $job->refresh();
         $this->assertSame(ImageJobStatus::Failed, $job->status);
         $this->assertSame(ImageErrorCode::WorkerLost, $job->error_code);
+    }
+
+    public function test_keeps_job_whose_retry_is_still_queued(): void
+    {
+        // Attempt 1 crashed 11 min ago; its retry is waiting behind a backlog in Redis.
+        $job = $this->job(ImageJobStatus::Processing, now()->subMinutes(11), attempts: 1);
+
+        $this->artisan('images:reap-stale')->assertSuccessful();
+
+        $this->assertSame(ImageJobStatus::Processing, $job->refresh()->status);
+    }
+
+    public function test_reaps_early_attempt_after_lost_threshold(): void
+    {
+        // No retry has shown up for over an hour: the queue message is gone.
+        $job = $this->job(ImageJobStatus::Processing, now()->subMinutes(61), attempts: 1);
+
+        $this->artisan('images:reap-stale')->assertSuccessful();
+
+        $this->assertSame(ImageErrorCode::WorkerLost, $job->refresh()->error_code);
     }
 
     public function test_ignores_recent_processing(): void

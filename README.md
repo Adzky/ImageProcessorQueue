@@ -57,7 +57,7 @@ bash scripts/smoke.sh
 | State machine | The claim token: duplicate deliveries are no-ops, retries take over, a stale owner can't overwrite the result, terminal rows never change |
 | API | 202 + `job_id` for JPG/PNG/WebP and uppercase extensions; the 20 MB limit; wrong type; a text file renamed to `.jpg` (content sniffing); 503 when the queue is down; status shape in every state; 404 for unknown and malformed ids; download 409/410/200; non-ASCII download filenames |
 | Worker | Landscape/portrait → 1280; tall-narrow (100×5000 → 26×1280); no upscaling; WebP output; quality setting reaches the encoder; PNG transparency kept; CMYK → sRGB; EXIF orientation; metadata stripped; first frame of animations; corrupt file; unsupported format; >50 MP; no partial files left behind; permanent failures not retried; `retries_exhausted` message |
-| Recovery & retention | The reaper fails stale `processing` jobs only, never `pending` or finished ones, and is scheduled every minute. Cleanup expires finished jobs after 24 h (files deleted, 410 on download), never touches unfinished ones, and is idempotent |
+| Recovery & retention | The reaper fails orphaned `processing` jobs (final attempt after 10 min, earlier attempts only after 1 h, so queued retries survive a backlog), never `pending` or finished ones, and is scheduled every minute. Cleanup expires finished jobs after 24 h (files deleted, 410 on download), never touches unfinished ones, and is idempotent |
 | Frontend | Backoff sequence (cap, jitter), stop on done, error backoff, pause while the tab is hidden, give-up, cancel; client validation; API error mapping (413, 422, 404, network); resume-after-reload storage (corrupt or unavailable storage) |
 
 ## Environment variables
@@ -76,7 +76,8 @@ bash scripts/smoke.sh
 | `IMAGE_MAX_DIMENSION` | `1280` | Longest side of the output. |
 | `IMAGE_QUALITY` | `80` | WebP quality. |
 | `IMAGE_MAX_PIXELS` | `50000000` | Inputs above 50 MP are rejected (guards against decompression bombs). |
-| `IMAGE_STALE_AFTER_SECONDS` | `600` | The reaper fails `processing` jobs whose last claim is older than this. |
+| `IMAGE_STALE_AFTER_SECONDS` | `600` | The reaper fails a job on its final attempt whose claim is older than this. |
+| `IMAGE_LOST_AFTER_SECONDS` | `3600` | The reaper fails a job on an earlier attempt (retry still queued) only after this long, when its queue message must have been lost. |
 | `IMAGE_RETENTION_HOURS` | `24` | Hourly cleanup deletes files of finished jobs older than this. The download then answers 410 Gone. |
 | `IMAGE_PROCESSING_DELAY_MS` | `0` | **Demo only.** Adds an artificial delay inside the worker so you can watch the states change or kill a worker mid-job. |
 | `VITE_API_BASE_URL` | `/api` | Frontend build-time API base. |
@@ -140,7 +141,7 @@ The queue attempt number works as a **claim token**. Laravel's Redis queue incre
 | **Transient error** (I/O, DB hiccup) | Retried up to 3 attempts, with 5 s and 15 s backoff. Then `failed` / "couldn't process this image after 3 attempts". |
 | **Worker stopped gracefully** (deploy, `docker compose stop`) | `queue:work` finishes the current job before exiting. |
 | **Worker killed mid-job** (OOM, SIGKILL, host crash) | The message stays reserved in Redis. After `retry_after` (150 s), the next worker that polls the queue moves the expired reservation back onto the queue. It re-reserves it with a higher attempt number, re-claims the row and finishes. After 3 attempts the job is marked `failed`. |
-| **Job orphaned anyway** (all workers down past the last attempt, queue data lost) | The scheduler runs `images:reap-stale` every minute and fails `processing` rows whose last claim is older than 10 min with "Processing didn't finish in time". **`pending` rows are never reaped**: a backlog behind busy workers is normal, not a failure. |
+| **Job orphaned anyway** (all workers down past the last attempt, queue data lost) | The scheduler runs `images:reap-stale` every minute and fails orphaned `processing` rows with "Processing didn't finish in time". On the **final attempt** that happens 10 min after its claim, because no retry is coming. On **earlier attempts** a retry is still queued, maybe behind a backlog, so it waits **1 h** and assumes the queue message was lost only then. **`pending` rows are never reaped**: a backlog behind busy workers is normal, not a failure. |
 | **Queue unreachable at upload time** | The row is marked `failed` (`queue_unavailable`) and the API returns 503, so the job never sits in `pending` with no message behind it. |
 
 #### Try the crash recovery yourself
