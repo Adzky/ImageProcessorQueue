@@ -121,7 +121,7 @@ services:
     image: image-processor-api-base
     working_dir: /app
     entrypoint: []
-    command: ["sh", "-c", "composer install --no-interaction --no-progress && php artisan test"]
+    command: ["sh", "-c", "touch .env && composer install --no-interaction --no-progress && php artisan test"]
     environment:
       DB_HOST: postgres
     volumes:
