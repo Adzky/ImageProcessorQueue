@@ -26,17 +26,20 @@ trait MakesImages
 
         $im = new Imagick;
         for ($i = 0; $i < $frames; $i++) {
+            $fill = new ImagickPixel($i === 0 ? $color : '#cc3333');
             $frame = new Imagick;
-            $frame->newImage($w, $h, new ImagickPixel($i === 0 ? $color : '#cc3333'));
             if (! empty($opts['alpha'])) {
-                // Left half opaque, right half fully transparent.
-                $frame->setImageAlphaChannel(Imagick::ALPHACHANNEL_SET);
-                $draw = new \ImagickDraw;
-                $draw->setFillColor(new ImagickPixel('transparent'));
-                $draw->rectangle(intdiv($w, 2), 0, $w, $h);
-                $frame->setImageCompose(Imagick::COMPOSITE_COPY);
-                $frame->drawImage($draw);
-                $frame->setImageAlphaChannel(Imagick::ALPHACHANNEL_ACTIVATE);
+                // Fully transparent canvas with an opaque left half.
+                $frame->newImage($w, $h, new ImagickPixel('transparent'));
+                $half = new Imagick;
+                $half->newImage(intdiv($w, 2), $h, $fill);
+                $frame->compositeImage($half, Imagick::COMPOSITE_OVER, 0, 0);
+            } else {
+                $frame->newImage($w, $h, $fill);
+            }
+            if (! empty($opts['noise'])) {
+                // Detail makes encoder quality visibly change the output size.
+                $frame->addNoiseImage(Imagick::NOISE_GAUSSIAN);
             }
             $frame->setImageFormat($format);
             $im->addImage($frame);
@@ -45,23 +48,37 @@ trait MakesImages
         if (! empty($opts['cmyk'])) {
             $im->transformImageColorspace(Imagick::COLORSPACE_CMYK);
         }
-        if (isset($opts['orientation'])) {
-            $im->setImageOrientation($opts['orientation']);
-        }
 
         $path = tempnam(sys_get_temp_dir(), 'img').'.'.($format === 'jpeg' ? 'jpg' : $format);
         $im->setImageFormat($format);
         $frames > 1 ? $im->writeImages($path, true) : $im->writeImage($path);
+
+        if (isset($opts['orientation'])) {
+            // Imagick doesn't write the EXIF orientation tag into JPEGs, so inject a minimal
+            // EXIF APP1 segment (little-endian TIFF, one IFD entry: 0x0112 Orientation).
+            $tiff = "II\x2a\x00\x08\x00\x00\x00"
+                ."\x01\x00"
+                ."\x12\x01\x03\x00\x01\x00\x00\x00".pack('v', $opts['orientation'])."\x00\x00"
+                ."\x00\x00\x00\x00";
+            $payload = "Exif\x00\x00".$tiff;
+            $jpeg = file_get_contents($path);
+            file_put_contents($path, "\xFF\xD8\xFF\xE1".pack('n', strlen($payload) + 2).$payload.substr($jpeg, 2));
+        }
+
         $this->madeImages[] = $path;
 
         return $path;
     }
 
-    protected function makeCorruptFile(string $extension = 'png'): string
+    /** A real PNG cut short and padded with junk: valid header and size, undecodable body. */
+    protected function makeCorruptFile(): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'bad').'.'.$extension;
-        // A PNG signature followed by junk: passes MIME sniffing, fails decoding.
-        file_put_contents($path, "\x89PNG\r\n\x1a\n".random_bytes(512));
+        $png = new Imagick;
+        $png->newImage(50, 50, new ImagickPixel('red'));
+        $png->setImageFormat('png');
+
+        $path = tempnam(sys_get_temp_dir(), 'bad').'.png';
+        file_put_contents($path, substr($png->getImageBlob(), 0, 40).random_bytes(256));
         $this->madeImages[] = $path;
 
         return $path;
