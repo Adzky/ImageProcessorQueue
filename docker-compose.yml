@@ -112,6 +112,16 @@ services:
       api: { condition: service_healthy }
     restart: unless-stopped
 
+  # Serves the React SPA and proxies /api to Laravel (single origin).
+  web:
+    build: ./apps/web
+    image: image-processor-web
+    ports:
+      - "8080:8080"
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
   # Backend test runner: docker compose --profile test run --rm api-test
   api-test:
     profiles: [test]
