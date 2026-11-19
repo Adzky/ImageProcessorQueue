@@ -1,0 +1,10 @@
+.superpowers/
+.env
+apps/api/vendor/
+apps/api/.env
+apps/api/storage/app/images/
+apps/api/.phpunit.result.cache
+apps/web/node_modules/
+apps/web/dist/
+node_modules/
+.DS_Store
