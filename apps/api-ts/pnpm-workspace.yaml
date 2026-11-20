@@ -1,2 +1,4 @@
 allowBuilds:
   esbuild: false
+  # Optional native msgpack speed-up for bullmq; msgpackr falls back to pure JS without it.
+  msgpackr-extract: false
