@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { processImage } from '../../src/images/processor.js';
 import { errorMessage, type ImageErrorCode, PermanentImageFailure } from '../../src/jobs/errors.js';
-import { cleanupImages, makeCorruptFile, makeImage, makeTempDir } from '../support/images.js';
+import { cleanupImages, makeApng, makeCorruptFile, makeImage, makeTempDir } from '../support/images.js';
 
 const base = { maxDimension: 1280, quality: 80, maxPixels: 50_000_000, timeoutSeconds: 30 };
 
@@ -60,6 +60,19 @@ describe('processImage', () => {
   it('does not upscale small images', async () => {
     const result = await processImage(await makeImage(800, 600), dest, base);
     expect([result.width, result.height]).toEqual([800, 600]);
+  });
+
+  it('processes an APNG as its first frame in a single-page WebP', async () => {
+    const result = await processImage(await makeApng(60, 40), dest, base);
+
+    expect([result.width, result.height]).toEqual([60, 40]);
+    const meta = await sharp(dest).metadata();
+    expect(meta.format).toBe('webp');
+    expect(meta.pages ?? 1).toBe(1);
+    // Frame 1 is blue (#3366cc); frame 2 would be red.
+    const { data } = await sharp(dest).raw().toBuffer({ resolveWithObject: true });
+    expect(data[0]).toBeLessThan(100);
+    expect(data[2]).toBeGreaterThan(150);
   });
 
   it('outputs webp', async () => {

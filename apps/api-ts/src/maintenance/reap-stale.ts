@@ -1,6 +1,6 @@
 import { and, eq, gte, lt, or } from 'drizzle-orm';
 import { imageJobs } from '../db/schema.js';
-import { MAX_TRIES } from '../jobs/process-job.js';
+import { MAX_TRIES } from '../jobs/policy.js';
 import { JobStatus } from '../jobs/status.js';
 import type { MaintenanceDeps } from './deps.js';
 

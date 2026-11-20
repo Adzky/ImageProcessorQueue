@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../../src/config.js';
 import { sanitiseName } from '../../src/http/upload.js';
 import { createQueue, enqueue } from '../../src/queue.js';
-import { makeImage, cleanupImages } from '../support/images.js';
+import { makeApng, makeImage, cleanupImages } from '../support/images.js';
 import { testDb } from '../support/db.js';
 import {
   appWith,
@@ -79,6 +79,17 @@ describe('POST /api/images', () => {
     expect(existsSync(join(config.storagePath, `uploads/${body.job_id}.${ext}`))).toBe(true);
     expect(await uploadsDir(config)).toEqual([`${body.job_id}.${ext}`]);
     expect(enqueued).toEqual([body.job_id]);
+  });
+
+  it('accepts an APNG (file-type reports image/apng) stored as png', async () => {
+    const res = await postFile(await makeApng(64, 48), 'anim.png');
+
+    expect(res.statusCode).toBe(202);
+    const id = res.json<{ job_id: string }>().job_id;
+    const job = await repo.find(id);
+    expect(job?.originalMime).toBe('image/png');
+    expect(job?.originalPath).toBe(`uploads/${id}.png`);
+    expect(existsSync(join(config.storagePath, `uploads/${id}.png`))).toBe(true);
   });
 
   it('accepts uppercase and .jpeg extensions', async () => {
@@ -224,6 +235,13 @@ describe('sanitiseName', () => {
   });
   it('limits to 200 characters', () => {
     expect(sanitiseName('a'.repeat(300))).toHaveLength(200);
+  });
+
+  it('trims whitespace exposed by truncation but not otherwise', () => {
+    const name = 'a'.repeat(199) + ' ' + 'b'.repeat(5);
+    expect(name).toHaveLength(205);
+    expect(sanitiseName(name)).toBe('a'.repeat(199));
+    expect(sanitiseName('keep trailing ')).toBe('keep trailing ');
   });
   it('falls back to image', () => {
     expect(sanitiseName('\u0001')).toBe('image');

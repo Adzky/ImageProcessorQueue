@@ -1,5 +1,37 @@
 import { z } from 'zod';
 
+const LOG_LEVELS = {
+  trace: 'trace',
+  debug: 'debug',
+  info: 'info',
+  warn: 'warn',
+  error: 'error',
+  fatal: 'fatal',
+  silent: 'silent',
+  // Laravel (Monolog) names, since the root .env feeds both stacks.
+  notice: 'info',
+  warning: 'warn',
+  critical: 'fatal',
+  alert: 'fatal',
+  emergency: 'fatal',
+} as const;
+
+const logLevel = z
+  .string()
+  .min(1)
+  .default('info')
+  .transform((value, ctx) => {
+    const level = new Map<string, string>(Object.entries(LOG_LEVELS)).get(value.toLowerCase());
+    if (level === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Invalid LOG_LEVEL ${value}; use one of ${Object.keys(LOG_LEVELS).join(', ')}`,
+      });
+      return z.NEVER;
+    }
+    return level;
+  });
+
 const int = (fallback: number) => z.coerce.number().int().default(fallback);
 
 const envSchema = z.object({
@@ -19,7 +51,7 @@ const envSchema = z.object({
   DB_PASSWORD: z.string().default('secret'),
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: int(6379),
-  LOG_LEVEL: z.string().min(1).default('info'),
+  LOG_LEVEL: logLevel,
   RUN_MIGRATIONS: z
     .enum(['true', 'false'])
     .default('false')

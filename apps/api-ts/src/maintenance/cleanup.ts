@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { and, eq, inArray, isNull, lt } from 'drizzle-orm';
 import { imageJobs } from '../db/schema.js';
 import { JobStatus } from '../jobs/status.js';
+import type { Logger } from 'pino';
 import type { MaintenanceDeps } from './deps.js';
 
 /**
@@ -10,7 +11,7 @@ import type { MaintenanceDeps } from './deps.js';
  * Rows are kept so the API can answer 410 Gone instead of 404. Returns the number expired.
  */
 export async function cleanupExpiredJobs(
-  { db, config }: MaintenanceDeps,
+  { db, config, logger }: MaintenanceDeps & { logger?: Logger },
   now: Date = new Date(),
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - config.retentionHours * 3_600_000);
@@ -34,8 +35,14 @@ export async function cleanupExpiredJobs(
   for (const job of candidates) {
     for (const path of [job.originalPath, job.resultPath]) {
       if (path === null || path === '') continue;
-      // force: true ignores a missing file (ENOENT) and rethrows anything else.
-      await rm(join(config.storagePath, path), { force: true });
+      // force: true ignores a missing file (ENOENT). Anything else is logged and the row is
+      // still expired, like Laravel's Storage::delete returning false, so one bad row
+      // cannot block the run every hour.
+      try {
+        await rm(join(config.storagePath, path), { force: true });
+      } catch (err) {
+        logger?.warn({ err, job_id: job.id, path }, 'Could not delete expired job file');
+      }
     }
 
     const rows = await db

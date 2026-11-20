@@ -5,7 +5,8 @@ import { JobRepository } from './jobs/repository.js';
 import { createWorker } from './queue.js';
 
 const config = loadConfig();
-const logger = pino({ level: config.logLevel });
+// stderr, like Laravel's LOG_CHANNEL=stderr; stdout stays free for the process's own output.
+const logger = pino({ level: config.logLevel }, pino.destination({ dest: 2, sync: true }));
 const database = createDb(config, (err) => {
   logger.error({ err }, 'Postgres pool error');
 });

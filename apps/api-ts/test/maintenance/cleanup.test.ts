@@ -1,8 +1,9 @@
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config.js';
 import type { ImageJob } from '../../src/db/schema.js';
+import { pino } from 'pino';
 import { cleanupExpiredJobs } from '../../src/maintenance/cleanup.js';
 import { makeJob, testDb } from '../support/db.js';
 import { cleanupImages, makeTempDir } from '../support/images.js';
@@ -76,6 +77,38 @@ describe('cleanupExpiredJobs', () => {
     expect((await repo.find(pending.job.id))?.expiredAt).toBeNull();
     expect((await repo.find(processing.job.id))?.expiredAt).toBeNull();
     expect(await exists(join(pending.root, pending.job.originalPath))).toBe(true);
+  });
+
+  it('logs and still expires a row whose file cannot be deleted, then continues', async () => {
+    const root = await makeTempDir();
+    const make = async (hours: number) => {
+      const id = crypto.randomUUID();
+      const job = await makeJob({
+        id,
+        status: 'failed',
+        createdAt: hoursAgo(hours),
+        originalPath: `uploads/${id}.jpg`,
+        resultPath: null,
+      });
+      return job;
+    };
+    const poison = await make(48);
+    const healthy = await make(47);
+    // A non-empty directory where the file should be makes rm fail with something other than ENOENT.
+    await put(root, `${poison.originalPath}/inner`);
+    await put(root, healthy.originalPath);
+
+    const logger = pino({ level: 'silent' });
+    const warn = vi.spyOn(logger, 'warn');
+    const config = loadConfig({ IMAGE_STORAGE_PATH: root });
+
+    expect(await cleanupExpiredJobs({ db, repo, config, logger })).toBe(2);
+
+    expect((await repo.find(poison.id))?.expiredAt).not.toBeNull();
+    expect((await repo.find(healthy.id))?.expiredAt).not.toBeNull();
+    expect(await exists(join(root, healthy.originalPath))).toBe(false);
+    expect(await exists(join(root, poison.originalPath))).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ job_id: poison.id }), expect.any(String));
   });
 
   it('tolerates missing files and is idempotent', async () => {

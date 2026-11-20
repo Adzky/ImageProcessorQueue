@@ -15,8 +15,12 @@ import { apiError, MISSING_MESSAGE, TOO_LARGE_MESSAGE, TYPE_MESSAGE, validationF
 const EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
+  'image/apng': 'png', // file-type reports a PNG with an acTL chunk as APNG
   'image/webp': 'webp',
 };
+
+/** Stored mime for types that file-type reports under a more specific name. */
+const STORED_MIME: Record<string, string> = { 'image/apng': 'image/png' };
 
 export const MAX_NAME_LENGTH = 200;
 
@@ -26,7 +30,9 @@ export function sanitiseName(name: string): string {
   const base = unified.slice(unified.lastIndexOf('/') + 1);
   // eslint-disable-next-line no-control-regex -- stripping control characters is the point
   const clean = base.replace(/[\x00-\x1F\x7F]/gu, '');
-  return Array.from(clean === '' ? 'image' : clean).slice(0, MAX_NAME_LENGTH).join('');
+  const chars = Array.from(clean === '' ? 'image' : clean);
+  // Like Str::limit, trim trailing whitespace left by the cut (only when it cut anything).
+  return chars.length > MAX_NAME_LENGTH ? chars.slice(0, MAX_NAME_LENGTH).join('').trimEnd() : chars.join('');
 }
 
 export interface UploadDeps {
@@ -80,7 +86,7 @@ async function store(request: FastifyRequest, upload: MultipartFile, deps: Uploa
     const job = await repo.insert({
       id,
       originalName: sanitiseName(upload.filename),
-      originalMime: type.mime,
+      originalMime: STORED_MIME[type.mime] ?? type.mime,
       originalSize: size,
       originalPath: `uploads/${id}.${ext}`,
     });

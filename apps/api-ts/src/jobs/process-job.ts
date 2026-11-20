@@ -2,12 +2,7 @@ import { UnrecoverableError } from 'bullmq';
 import type { Logger } from 'pino';
 import { runImageJob, type RunnerDeps } from '../images/runner.js';
 import { PermanentImageFailure, type ImageErrorCode } from './errors.js';
-
-/** Deliveries allowed per job, counting both retries and redeliveries after a worker crash. */
-export const MAX_TRIES = 3;
-
-/** Wait before retry 1 and retry 2. */
-export const BACKOFF_MS = [5000, 15000] as const;
+import { BACKOFF_MS, MAX_TRIES } from './policy.js';
 
 export type DeliveryDeps = RunnerDeps & { logger: Logger };
 

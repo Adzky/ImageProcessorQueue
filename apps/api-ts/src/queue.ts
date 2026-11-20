@@ -1,7 +1,8 @@
 import { Queue, Worker } from 'bullmq';
 import { z } from 'zod';
 import type { Config } from './config.js';
-import { handleDelivery, MAX_TRIES, retryDelay, type DeliveryDeps } from './jobs/process-job.js';
+import { handleDelivery, retryDelay, type DeliveryDeps } from './jobs/process-job.js';
+import { MAX_TRIES } from './jobs/policy.js';
 
 export const QUEUE_NAME = 'images';
 
