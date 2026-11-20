@@ -1,5 +1,28 @@
 name: image-processor-ts
 
+x-api-env: &api-env
+  TZ: UTC
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_DATABASE: ${DB_DATABASE:-images}
+  DB_USERNAME: ${DB_USERNAME:-images}
+  DB_PASSWORD: ${DB_PASSWORD:-secret}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  IMAGE_MAX_UPLOAD_KB: ${IMAGE_MAX_UPLOAD_KB:-20480}
+  IMAGE_MAX_DIMENSION: ${IMAGE_MAX_DIMENSION:-1280}
+  IMAGE_QUALITY: ${IMAGE_QUALITY:-80}
+  IMAGE_MAX_PIXELS: ${IMAGE_MAX_PIXELS:-50000000}
+  IMAGE_STALE_AFTER_SECONDS: ${IMAGE_STALE_AFTER_SECONDS:-600}
+  IMAGE_LOST_AFTER_SECONDS: ${IMAGE_LOST_AFTER_SECONDS:-3600}
+  IMAGE_RETENTION_HOURS: ${IMAGE_RETENTION_HOURS:-24}
+  IMAGE_PROCESSING_DELAY_MS: ${IMAGE_PROCESSING_DELAY_MS:-0}
+
+x-api-build: &api-build
+  context: ./apps/api-ts
+  target: app
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -27,6 +50,67 @@ services:
       timeout: 3s
       retries: 20
 
+  # HTTP API: validates + stores uploads, records jobs, enqueues. Never processes images.
+  api:
+    build: *api-build
+    image: image-processor-ts-api
+    environment:
+      <<: *api-env
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8001:8000"
+    volumes:
+      - images-data:/app/storage/images
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/up >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  # BullMQ worker: the only place images are decoded/resized/encoded. Scale with --scale worker=N.
+  worker:
+    build: *api-build
+    image: image-processor-ts-api
+    environment: *api-env
+    command: ["node", "dist/worker.js"]
+    volumes:
+      - images-data:/app/storage/images
+    stop_grace_period: 130s
+    healthcheck:
+      disable: true
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Runs scheduled maintenance (stale-job reaper, retention cleanup).
+  scheduler:
+    build: *api-build
+    image: image-processor-ts-api
+    environment: *api-env
+    command: ["node", "dist/scheduler.js"]
+    healthcheck:
+      disable: true
+    volumes:
+      - images-data:/app/storage/images
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Serves the React SPA and proxies /api to the TypeScript API (service name `api`).
+  web:
+    build: ./apps/web
+    image: image-processor-ts-web
+    ports:
+      - "8081:8080"
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
   # Backend test runner: docker compose -f docker-compose.ts.yml --profile test run --rm api-test
   api-test:
     profiles: [test]
@@ -51,3 +135,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  images-data:

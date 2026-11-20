@@ -5,6 +5,7 @@
 set -euo pipefail
 
 BASE="${BASE_URL:-http://localhost:8080}"
+COMPOSE="${COMPOSE:-docker compose}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -14,10 +15,17 @@ native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else ech
 fail() { echo "FAIL: $*" >&2; exit 1; }
 field() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
 
-echo "→ generating a 4000x3000 JPEG"
-docker compose exec -T worker php -r '
-  $i = new Imagick; $i->newPseudoImage(4000, 3000, "plasma:");
-  $i->setImageFormat("jpeg"); $i->setImageCompressionQuality(92); echo $i->getImageBlob();' > "$TMP/in.jpg"
+# The Laravel worker has php, the TypeScript worker has node.
+if $COMPOSE exec -T worker node -v >/dev/null 2>&1; then STACK=ts; else STACK=php; fi
+
+echo "→ generating a 4000x3000 JPEG ($STACK worker)"
+if [ "$STACK" = ts ]; then
+  $COMPOSE exec -T worker node scripts/smoke-image.mjs generate 4000 3000 > "$TMP/in.jpg"
+else
+  $COMPOSE exec -T worker php -r '
+    $i = new Imagick; $i->newPseudoImage(4000, 3000, "plasma:");
+    $i->setImageFormat("jpeg"); $i->setImageCompressionQuality(92); echo $i->getImageBlob();' > "$TMP/in.jpg"
+fi
 echo "  $(wc -c < "$TMP/in.jpg") bytes"
 
 echo "→ uploading to $BASE/api/images"
@@ -44,7 +52,11 @@ curl -sS -o "$(native "$TMP/out.webp")" "$BASE/api/images/$id/download"
 [ "$(head -c 4 "$TMP/out.webp")" = "RIFF" ] && [ "$(dd if="$TMP/out.webp" bs=1 skip=8 count=4 2>/dev/null)" = "WEBP" ] \
   || fail "download is not a WebP file"
 
-dims=$(docker compose exec -T worker php -r '$s = getimagesizefromstring(stream_get_contents(STDIN)); echo "$s[0]x$s[1]";' < "$TMP/out.webp")
+if [ "$STACK" = ts ]; then
+  dims=$($COMPOSE exec -T worker node scripts/smoke-image.mjs dims < "$TMP/out.webp")
+else
+  dims=$($COMPOSE exec -T worker php -r '$s = getimagesizefromstring(stream_get_contents(STDIN)); echo "$s[0]x$s[1]";' < "$TMP/out.webp")
+fi
 [ "$dims" = "1280x960" ] || fail "expected 1280x960, got $dims"
 
 echo "PASS: $(wc -c < "$TMP/out.webp") byte WebP, $dims"

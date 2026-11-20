@@ -7,6 +7,10 @@
     "down": "docker compose down",
     "test:api": "docker compose --profile test run --rm api-test",
     "test:web": "corepack pnpm --dir apps/web test",
-    "smoke": "bash scripts/smoke.sh"
+    "smoke": "bash scripts/smoke.sh",
+    "up:ts": "docker compose -f docker-compose.ts.yml up --build",
+    "down:ts": "docker compose -f docker-compose.ts.yml down",
+    "test:api-ts": "docker compose -f docker-compose.ts.yml --profile test run --rm api-test",
+    "smoke:ts": "BASE_URL=http://localhost:8081 COMPOSE=\"docker compose -f docker-compose.ts.yml\" bash scripts/smoke.sh"
   }
 }
