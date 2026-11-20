@@ -15,8 +15,14 @@ export type ImageJobData = z.infer<typeof jobData>;
  * Producer side. Fails fast instead of queueing commands while Redis is unreachable, so an
  * upload can answer 503 within ~2 s rather than hang.
  */
-export function createQueue(config: Config, name: string = QUEUE_NAME): Queue<ImageJobData> {
-  return new Queue<ImageJobData>(name, {
+export function createQueue(
+  config: Config,
+  name: string = QUEUE_NAME,
+  onError: (err: Error) => void = (err) => {
+    console.error('Queue producer error', err);
+  },
+): Queue<ImageJobData> {
+  const queue = new Queue<ImageJobData>(name, {
     connection: {
       host: config.redis.host,
       port: config.redis.port,
@@ -25,6 +31,9 @@ export function createQueue(config: Config, name: string = QUEUE_NAME): Queue<Im
       connectTimeout: 2000,
     },
   });
+  // Without a listener a Redis connection error is thrown as an unhandled 'error' event.
+  queue.on('error', onError);
+  return queue;
 }
 
 /**
