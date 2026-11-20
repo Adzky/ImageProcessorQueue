@@ -62,8 +62,8 @@ async function inspect(
 ): Promise<{ originalWidth: number; originalHeight: number }> {
   const meta = await sharp(source, { failOn: 'error' })
     .metadata()
-    .catch((e: unknown) => {
-      throw classify(e);
+    .catch(() => {
+      throw new PermanentImageFailure('corrupt_image');
     });
   if (!SUPPORTED.has(meta.format)) throw new PermanentImageFailure('unsupported_image');
   if (meta.width * meta.height > maxPixels) throw new PermanentImageFailure('dimensions_too_large');
@@ -75,10 +75,21 @@ async function inspect(
   };
 }
 
-/** Decode failures are permanent; timeouts and filesystem errors may succeed on retry. */
+/**
+ * libvips/sharp messages that mean the input itself can't be decoded. Observed:
+ * "Input file has corrupt header", "Input file contains unsupported image format",
+ * "vipspng: libpng read error", "VipsJpeg: premature end of JPEG image".
+ */
+const DECODE_FAILURE = /corrupt|unsupported image format|read error|premature end|truncated|decode error/i;
+
+/**
+ * Only clear decode failures are permanent (like the PHP DecoderException). Everything else,
+ * including timeouts ("timeout: 100% complete ...") and write errors, is rethrown unchanged
+ * so the queue retries it.
+ */
 function classify(e: unknown): unknown {
-  if (!(e instanceof Error)) return e;
-  if (/timed out/i.test(e.message)) return e;
-  if ('code' in e && typeof e.code === 'string') return e;
-  return new PermanentImageFailure('corrupt_image');
+  if (e instanceof Error && !/^timeout:/i.test(e.message) && DECODE_FAILURE.test(e.message)) {
+    return new PermanentImageFailure('corrupt_image');
+  }
+  return e;
 }

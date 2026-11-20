@@ -165,4 +165,43 @@ describe('processImage', () => {
 
     await expectFailure('corrupt_image', path);
   });
+
+  it('does not wrap a timeout in PermanentImageFailure', async () => {
+    // Large, incompressible, kept at full size so the 1 s budget is reliably exceeded.
+    const big = await sharp({
+      create: { width: 6000, height: 6000, channels: 3, background: '#808080', noise: { type: 'gaussian', mean: 128, sigma: 60 } },
+    })
+      .png({ compressionLevel: 0 })
+      .toBuffer();
+    const path = join(await makeTempDir(), 'big.png');
+    await writeFile(path, big);
+
+    const err = await processImage(path, dest, {
+      ...base,
+      maxDimension: 6000,
+      quality: 100,
+      timeoutSeconds: 1,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(PermanentImageFailure);
+    expect(err instanceof Error ? err.message : '').toMatch(/^timeout:/);
+    expect(await exists(dest)).toBe(false);
+    expect(await exists(dest + '.tmp')).toBe(false);
+  }, 60_000);
+
+  it('does not wrap a filesystem error in PermanentImageFailure', async () => {
+    const missing = join(await makeTempDir(), 'no-such-dir', 'out.webp');
+
+    const err = await processImage(await makeImage(100, 100), missing, base).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(PermanentImageFailure);
+  });
 });
