@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-# End-to-end smoke test against the running stack (docker compose up).
+# End-to-end smoke test against the running stack.
 # Uploads a large JPEG through the web container, polls until done, downloads the
 # result and checks it is a WebP whose longest side is 1280 px.
+#
+# Laravel stack (default):  bash scripts/smoke.sh
+# TypeScript stack:         bash scripts/smoke.sh --ts
+#   which is the same as    BASE_URL=http://localhost:8081 #                           COMPOSE="docker compose -f docker-compose.ts.yml" bash scripts/smoke.sh
+# BASE_URL and COMPOSE must point at the same stack. The stack is taken from COMPOSE (a value
+# containing docker-compose.ts.yml means TypeScript) unless STACK=ts|php is set explicitly.
 set -euo pipefail
+
+if [ "${1:-}" = "--ts" ]; then
+  BASE_URL="${BASE_URL:-http://localhost:8081}"
+  COMPOSE="${COMPOSE:-docker compose -f docker-compose.ts.yml}"
+fi
 
 BASE="${BASE_URL:-http://localhost:8080}"
 COMPOSE="${COMPOSE:-docker compose}"
@@ -15,8 +26,11 @@ native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else ech
 fail() { echo "FAIL: $*" >&2; exit 1; }
 field() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
 
-# The Laravel worker has php, the TypeScript worker has node.
-if $COMPOSE exec -T worker node -v >/dev/null 2>&1; then STACK=ts; else STACK=php; fi
+if [ -z "${STACK:-}" ]; then
+  case "$COMPOSE" in *docker-compose.ts.yml*) STACK=ts ;; *) STACK=php ;; esac
+fi
+case "$STACK" in ts|php) ;; *) fail "STACK must be 'ts' or 'php', got '$STACK'" ;; esac
+$COMPOSE exec -T worker true >/dev/null 2>&1   || fail "the $STACK stack's worker container is not running (start it, and check COMPOSE='$COMPOSE' matches BASE_URL='$BASE')"
 
 echo "→ generating a 4000x3000 JPEG ($STACK worker)"
 if [ "$STACK" = ts ]; then

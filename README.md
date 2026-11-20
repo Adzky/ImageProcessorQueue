@@ -26,7 +26,7 @@ Requirements: Docker (with Compose v2). Nothing else needs to be installed local
 | Stop | `docker compose down` | `docker compose -f docker-compose.ts.yml down` |
 | Backend tests | `docker compose --profile test run --rm api-test` | `docker compose -f docker-compose.ts.yml --profile test run --rm api-test` |
 
-Both stacks can run **at the same time**. They use different compose project names, ports and volumes, so they never share data. The root `package.json` has shortcuts: `up`, `down`, `test:api` and `smoke` for Laravel, and `up:ts`, `down:ts`, `test:api-ts` and `smoke:ts` for Fastify. `smoke:ts` sets environment variables inline, so run it from a POSIX shell (Git Bash on Windows).
+Both stacks can run **at the same time**. They use different compose project names, ports and volumes, so they never share data. The root `package.json` has shortcuts: `up`, `down`, `test:api` and `smoke` for Laravel, and `up:ts`, `down:ts`, `test:api-ts` and `smoke:ts` for Fastify. `smoke:ts` works from any shell, including cmd.exe and PowerShell (it needs `bash` on the PATH, which Git for Windows provides).
 
 ## HTTP API contract
 
@@ -289,11 +289,11 @@ Stop everything with `docker compose -f docker-compose.ts.yml down`. Add `-v` to
 # Backend: typecheck + lint + Vitest against a real Postgres (images_test) and a real Redis, inside a container
 docker compose -f docker-compose.ts.yml --profile test run --rm api-test
 
-# End-to-end: with the stack running (needs a POSIX shell such as Git Bash), upload → poll → download → verify WebP 1280px
-BASE_URL=http://localhost:8081 COMPOSE="docker compose -f docker-compose.ts.yml" bash scripts/smoke.sh
+# End-to-end: with the stack running (needs `bash`, e.g. Git Bash on Windows), upload → poll → download → verify WebP 1280px
+bash scripts/smoke.sh --ts
 ```
 
-The same `scripts/smoke.sh` serves both stacks. It detects which worker it is talking to (the TypeScript worker has `node`, the Laravel one has `php`) and generates its test image accordingly.
+The same `scripts/smoke.sh` serves both stacks. `--ts` is shorthand for `BASE_URL=http://localhost:8081 COMPOSE="docker compose -f docker-compose.ts.yml"`; if you set `BASE_URL` and `COMPOSE` yourself they must point at the same stack. The stack is taken from `COMPOSE` (or an explicit `STACK=ts|php`), and the script fails early if that stack's worker container is not running.
 
 | Layer | What is covered |
 |---|---|
@@ -310,7 +310,7 @@ The same `scripts/smoke.sh` serves both stacks. It detects which worker it is ta
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LOG_LEVEL` | `info` | pino log level. Logs are JSON on stdout (`docker compose -f docker-compose.ts.yml logs worker`). |
+| `LOG_LEVEL` | `info` | pino log level. Logs are JSON on stderr (`docker compose -f docker-compose.ts.yml logs worker`). |
 | `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `images`, `images`, `secret` | Postgres credentials (shared by the `postgres` container and the app). |
 | `DB_HOST`, `DB_PORT`, `REDIS_HOST`, `REDIS_PORT` | `postgres`, `5432`, `redis`, `6379` | Wiring between containers (set in compose; outside compose the code defaults to `localhost`). |
 | `RUN_MIGRATIONS` | `true` on `api`, `false` elsewhere | The `api` container applies the Drizzle migrations at start-up. |
@@ -364,7 +364,7 @@ One image, three commands: `node dist/server.js` (api), `node dist/worker.js` an
 ### Why these pieces
 
 - **A queue + a separate worker container.** Same reasoning as in the Laravel section: the HTTP tier stays fast, the worker tier scales on its own (`--scale worker=N`), and a slow or crashing image never takes the API down. The `api`, `worker` and `scheduler` containers run the **same image** with different commands, so the job code is shared but only the worker process executes it.
-- **BullMQ on Redis.** Fastify has no queue of its own, so I needed a library. BullMQ gives me delayed retries with custom backoff, a lock/stall mechanism that redelivers a job whose worker died, graceful close that waits for the job in progress, and an attempt counter that works as a claim token (see decisions). Redis was already in the stack for Laravel, so both backends share the same infrastructure. The producer uses its own Redis connection with the offline queue disabled, so a dead Redis fails fast instead of hanging a request.
+- **BullMQ on Redis.** Fastify has no queue of its own, so I needed a library. BullMQ gives me delayed retries with custom backoff, a lock/stall mechanism that redelivers a job whose worker died, graceful close that waits for the job in progress, and an attempt counter that works as a claim token (see decisions). Redis was already in the stack for Laravel, so both backends use the same kind of infrastructure. The producer uses its own Redis connection with the offline queue disabled, so a dead Redis fails fast instead of hanging a request.
 - **sharp (libvips).** Fast, low memory, and it streams. It supports the same transform in one pipeline: EXIF rotation, colour-space conversion, `fit: inside` resize without enlargement, WebP encoding. `limitInputPixels` guards against decompression bombs, and `.timeout()` bounds a single attempt.
 - **Drizzle ORM + pg.** The schema is plain TypeScript, queries are typed, and the conditional `UPDATE`s of the state machine read almost like the SQL they produce. Migrations are generated by `drizzle-kit` into `src/db/migrations` and applied by the `api` container at start-up when `RUN_MIGRATIONS=true`. There is no query-builder magic hiding the guards.
 - **zod** validates the environment at start-up, the route parameters and the queue payload, so bad input fails at the edge with a clear message instead of deep in a handler.
@@ -448,7 +448,7 @@ apps/api-ts/     Fastify API + BullMQ worker + scheduler (one image, three comma
 | Image library | Intervention Image on Imagick | sharp (libvips) |
 | ORM / migrations | Eloquent, Laravel migrations | Drizzle ORM + pg, `drizzle-kit` migrations applied at `api` start |
 | Scheduler | `schedule:work` runs `images:reap-stale` and `images:cleanup` | croner in a `scheduler` process (every minute, hourly, `protect: true`) |
-| Logging | Laravel logging to stderr (`LOG_CHANNEL=stderr`) | pino, JSON on stdout |
+| Logging | Laravel logging to stderr (`LOG_CHANNEL=stderr`) | pino, JSON on stderr |
 | Tests | PHPUnit against a real Postgres | Vitest against a real Postgres and Redis, plus `tsc` and ESLint |
 
 ## Repository layout
