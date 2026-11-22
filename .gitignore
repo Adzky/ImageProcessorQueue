@@ -1,4 +1,5 @@
 .superpowers/
+graphify-out/
 .env
 apps/api/vendor/
 apps/api/.env
